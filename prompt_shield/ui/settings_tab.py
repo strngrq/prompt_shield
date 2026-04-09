@@ -53,6 +53,14 @@ def _is_frozen() -> bool:
     return getattr(sys, "frozen", False)
 
 
+def _subprocess_kwargs() -> dict:
+    """Extra kwargs for subprocess.run to suppress console windows on Windows."""
+    kw: dict = {}
+    if sys.platform == "win32":
+        kw["creationflags"] = subprocess.CREATE_NO_WINDOW
+    return kw
+
+
 def _models_dir() -> Path:
     d = Path.home() / ".promptshield" / "models"
     d.mkdir(parents=True, exist_ok=True)

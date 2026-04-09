@@ -156,14 +156,15 @@ coll = COLLECT(
     name="PromptShield",
 )
 
-app = BUNDLE(
-    coll,
-    name="PromptShield.app",
-    icon=ICON_MAC,
-    bundle_identifier="com.promptshield.app",
-    info_plist={
-        "CFBundleDisplayName": "PromptShield",
-        "CFBundleShortVersionString": "1.0.0",
-        "NSHighResolutionCapable": True,
-    },
-)
+if sys.platform == "darwin":
+    app = BUNDLE(
+        coll,
+        name="PromptShield.app",
+        icon=ICON_MAC,
+        bundle_identifier="com.promptshield.app",
+        info_plist={
+            "CFBundleDisplayName": "PromptShield",
+            "CFBundleShortVersionString": "1.0.0",
+            "NSHighResolutionCapable": True,
+        },
+    )
