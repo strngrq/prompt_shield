@@ -132,6 +132,8 @@ a.datas = [d for d in a.datas if _should_keep(d[0])]
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
+_is_win = sys.platform == "win32"
+
 exe = EXE(
     pyz,
     a.scripts,
@@ -140,8 +142,8 @@ exe = EXE(
     name="PromptShield",
     debug=False,
     bootloader_ignore_signals=False,
-    strip=True,
-    upx=True,
+    strip=not _is_win,
+    upx=not _is_win,
     console=False,
     icon=ICON,
 )
@@ -150,8 +152,8 @@ coll = COLLECT(
     exe,
     a.binaries,
     a.datas,
-    strip=True,
-    upx=True,
+    strip=not _is_win,
+    upx=not _is_win,
     upx_exclude=[],
     name="PromptShield",
 )
