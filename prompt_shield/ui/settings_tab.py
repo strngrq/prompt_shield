@@ -132,6 +132,7 @@ class ModelDownloadThread(QThread):
             capture_output=True,
             text=True,
             timeout=600,
+            **_subprocess_kwargs(),
         )
         if result.returncode != 0:
             raise RuntimeError(result.stderr or "spacy download failed")
@@ -377,6 +378,7 @@ class SettingsTab(QWidget):
                     [sys.executable, "-m", "pip", "uninstall", "-y",
                      model_name.replace("_", "-")],
                     capture_output=True,
+                    **_subprocess_kwargs(),
                 )
 
         self.status_label.setText(f"Removed models for {lang_code}.")
