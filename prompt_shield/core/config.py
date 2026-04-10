@@ -20,6 +20,8 @@ DEFAULTS: dict[str, Any] = {
     "sensitivity_threshold": 0.35,
     "active_languages": ["en"],
     "models_dir": str(Path.home() / ".promptshield" / "models"),
+    "copy_as_plain_text": True,
+    "anonymous_mask": False,
 }
 
 

@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QMimeData
 from PySide6.QtGui import QTextCursor, QTextCharFormat, QColor, QFont, QAction
 from PySide6.QtWidgets import QTextEdit, QToolTip, QMenu, QLabel, QVBoxLayout, QWidget
 
@@ -6,6 +6,8 @@ from PySide6.QtWidgets import QTextEdit, QToolTip, QMenu, QLabel, QVBoxLayout, Q
 PROP_PLACEHOLDER = 0x100001
 PROP_ORIGINAL = 0x100002
 PROP_CATEGORY = 0x100003
+
+ANONYMOUS_MASK = "XXXXX"
 
 
 def _char_format_at(doc, pos: int) -> QTextCharFormat:
@@ -43,6 +45,7 @@ class OutputEdit(QTextEdit):
         self.setMouseTracking(True)
 
         self._db = None
+        self._config = None
 
         self._hint_label = QLabel(
             "Hold Alt (⌥) for exact selection without snap-to-word", self
@@ -56,6 +59,24 @@ class OutputEdit(QTextEdit):
 
     def set_db(self, db):
         self._db = db
+
+    def set_config(self, config):
+        self._config = config
+
+    def _anonymous_mask_enabled(self) -> bool:
+        return bool(self._config and self._config.get("anonymous_mask"))
+
+    def _display_text_for(self, placeholder: str) -> str:
+        return ANONYMOUS_MASK if self._anonymous_mask_enabled() else placeholder
+
+    def createMimeDataFromSelection(self) -> QMimeData:
+        md = super().createMimeDataFromSelection()
+        if self._config and self._config.get("copy_as_plain_text"):
+            plain = md.text()
+            new_md = QMimeData()
+            new_md.setText(plain)
+            return new_md
+        return md
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -237,7 +258,7 @@ class OutputEdit(QTextEdit):
         fmt = self._placeholder_format(placeholder, stripped, "INFO")
 
         self.setReadOnly(False)
-        cursor.insertText(placeholder, fmt)
+        cursor.insertText(self._display_text_for(placeholder), fmt)
         self.setReadOnly(True)
 
     def _block_text_and_mask(self, text: str, cursor: QTextCursor):
@@ -265,7 +286,9 @@ class OutputEdit(QTextEdit):
 
         placeholder = self._db.create_mapping(stripped, "BLOCKED")
         fmt = self._placeholder_format(placeholder, stripped, "BLOCKED")
-        self._replace_all_plain_occurrences(stripped, placeholder, fmt)
+        self._replace_all_plain_occurrences(
+            stripped, self._display_text_for(placeholder), fmt
+        )
 
     def _block_text(self, text: str):
         """Block from placeholder context menu — add to block list (already masked)."""
@@ -339,7 +362,7 @@ class OutputEdit(QTextEdit):
 
         self.setReadOnly(True)
 
-    def _replace_all_plain_occurrences(self, search_text: str, placeholder: str, fmt: QTextCharFormat):
+    def _replace_all_plain_occurrences(self, search_text: str, display_text: str, fmt: QTextCharFormat):
         """Find and replace ALL plain-text (non-placeholder) occurrences of search_text."""
         doc = self.document()
         self.setReadOnly(False)
@@ -362,7 +385,7 @@ class OutputEdit(QTextEdit):
             cursor = QTextCursor(doc)
             cursor.setPosition(m_start)
             cursor.setPosition(m_end, QTextCursor.MoveMode.KeepAnchor)
-            cursor.insertText(placeholder, fmt)
+            cursor.insertText(display_text, fmt)
 
         self.setReadOnly(True)
 

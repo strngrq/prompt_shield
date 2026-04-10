@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
+    QGridLayout,
     QGroupBox,
     QCheckBox,
     QSlider,
@@ -22,6 +23,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QComboBox,
     QMessageBox,
+    QSizePolicy,
 )
 
 from prompt_shield.core.config import Config
@@ -168,38 +170,19 @@ class SettingsTab(QWidget):
 
         # ── Entity Categories ──
         cat_group = QGroupBox("Entity Categories")
-        cat_layout = QVBoxLayout(cat_group)
+        cat_layout = QGridLayout(cat_group)
+        cat_layout.setVerticalSpacing(2)
+        cat_layout.setContentsMargins(8, 6, 8, 6)
         self._cat_checkboxes: dict[str, QCheckBox] = {}
         enabled = self.config["enabled_categories"]
-        for cat in ALL_CATEGORIES:
+        columns = 2
+        for i, cat in enumerate(ALL_CATEGORIES):
             cb = QCheckBox(cat)
             cb.setChecked(cat in enabled)
             cb.toggled.connect(self._on_categories_changed)
-            cat_layout.addWidget(cb)
+            cat_layout.addWidget(cb, i // columns, i % columns)
             self._cat_checkboxes[cat] = cb
         main_layout.addWidget(cat_group)
-
-        # ── Sensitivity Threshold ──
-        thresh_group = QGroupBox("Sensitivity Threshold")
-        thresh_layout = QHBoxLayout(thresh_group)
-
-        self.threshold_slider = QSlider(Qt.Orientation.Horizontal)
-        self.threshold_slider.setRange(0, 100)
-        self.threshold_slider.setValue(int(self.config["sensitivity_threshold"] * 100))
-        self.threshold_slider.valueChanged.connect(self._on_slider_changed)
-
-        self.threshold_spin = QDoubleSpinBox()
-        self.threshold_spin.setRange(0.0, 1.0)
-        self.threshold_spin.setSingleStep(0.05)
-        self.threshold_spin.setDecimals(2)
-        self.threshold_spin.setValue(self.config["sensitivity_threshold"])
-        self.threshold_spin.valueChanged.connect(self._on_spin_changed)
-
-        thresh_layout.addWidget(QLabel("Less aggressive"))
-        thresh_layout.addWidget(self.threshold_slider)
-        thresh_layout.addWidget(QLabel("More aggressive"))
-        thresh_layout.addWidget(self.threshold_spin)
-        main_layout.addWidget(thresh_group)
 
         # ── Language Models ──
         lang_group = QGroupBox("Language Models")
@@ -207,6 +190,8 @@ class SettingsTab(QWidget):
 
         self.lang_list = QListWidget()
         self.lang_list.itemChanged.connect(self._on_lang_toggled)
+        self.lang_list.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.lang_list.setMaximumHeight(140)
         lang_layout.addWidget(self.lang_list)
 
         btn_layout = QHBoxLayout()
@@ -233,6 +218,47 @@ class SettingsTab(QWidget):
 
         main_layout.addWidget(lang_group)
 
+        # ── Output Options ──
+        output_group = QGroupBox("Output Options")
+        output_layout = QVBoxLayout(output_group)
+
+        self.copy_plain_cb = QCheckBox("Copy as plain text (strip formatting)")
+        self.copy_plain_cb.setChecked(bool(self.config.get("copy_as_plain_text")))
+        self.copy_plain_cb.toggled.connect(self._on_copy_plain_toggled)
+        output_layout.addWidget(self.copy_plain_cb)
+
+        self.anon_mask_cb = QCheckBox(
+            "Use anonymous mask (XXXXX) — hides numbered placeholders, "
+            "deanonymization not possible"
+        )
+        self.anon_mask_cb.setChecked(bool(self.config.get("anonymous_mask")))
+        self.anon_mask_cb.toggled.connect(self._on_anon_mask_toggled)
+        output_layout.addWidget(self.anon_mask_cb)
+
+        # Sensitivity threshold (lives inside Output Options)
+        thresh_layout = QHBoxLayout()
+        thresh_layout.addWidget(QLabel("Sensitivity:"))
+
+        self.threshold_slider = QSlider(Qt.Orientation.Horizontal)
+        self.threshold_slider.setRange(0, 100)
+        self.threshold_slider.setValue(int(self.config["sensitivity_threshold"] * 100))
+        self.threshold_slider.valueChanged.connect(self._on_slider_changed)
+
+        self.threshold_spin = QDoubleSpinBox()
+        self.threshold_spin.setRange(0.0, 1.0)
+        self.threshold_spin.setSingleStep(0.05)
+        self.threshold_spin.setDecimals(2)
+        self.threshold_spin.setValue(self.config["sensitivity_threshold"])
+        self.threshold_spin.valueChanged.connect(self._on_spin_changed)
+
+        thresh_layout.addWidget(QLabel("More aggressive"))
+        thresh_layout.addWidget(self.threshold_slider)
+        thresh_layout.addWidget(QLabel("Less aggressive"))
+        thresh_layout.addWidget(self.threshold_spin)
+        output_layout.addLayout(thresh_layout)
+
+        main_layout.addWidget(output_group)
+
         # ── Save button ──
         save_btn = QPushButton("Save Settings")
         save_btn.clicked.connect(self._on_save)
@@ -245,6 +271,12 @@ class SettingsTab(QWidget):
         outer_layout.addWidget(scroll)
 
         self._refresh_languages()
+
+    def _on_copy_plain_toggled(self, checked: bool):
+        self.config["copy_as_plain_text"] = bool(checked)
+
+    def _on_anon_mask_toggled(self, checked: bool):
+        self.config["anonymous_mask"] = bool(checked)
 
     def _on_categories_changed(self):
         enabled = [cat for cat, cb in self._cat_checkboxes.items() if cb.isChecked()]

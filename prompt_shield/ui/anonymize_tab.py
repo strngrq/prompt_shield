@@ -15,7 +15,13 @@ from PySide6.QtWidgets import (
 
 from prompt_shield.core.anonymizer import AnonymizationEngine, ReplacementInfo
 from prompt_shield.core.config import Config
-from prompt_shield.ui.output_edit import OutputEdit, PROP_PLACEHOLDER, PROP_ORIGINAL, PROP_CATEGORY
+from prompt_shield.ui.output_edit import (
+    OutputEdit,
+    PROP_PLACEHOLDER,
+    PROP_ORIGINAL,
+    PROP_CATEGORY,
+    ANONYMOUS_MASK,
+)
 
 
 class AnonymizeTab(QWidget):
@@ -65,6 +71,7 @@ class AnonymizeTab(QWidget):
         output_layout.setContentsMargins(0, 0, 0, 0)
         output_layout.addWidget(QLabel("Anonymized output:"))
         self.output_edit = OutputEdit()
+        self.output_edit.set_config(config)
         if db:
             self.output_edit.set_db(db)
         output_layout.addWidget(self.output_edit)
@@ -124,12 +131,14 @@ class AnonymizeTab(QWidget):
         sorted_repls = sorted(replacements, key=lambda r: r.start)
         repl_idx = 0
         pos = 0
+        use_mask = bool(self.config.get("anonymous_mask"))
 
         while pos < len(text):
             if repl_idx < len(sorted_repls) and pos == sorted_repls[repl_idx].start:
                 r = sorted_repls[repl_idx]
                 fmt = OutputEdit._placeholder_format(r.placeholder, r.original_text, r.category)
-                cursor.insertText(r.placeholder, fmt)
+                display = ANONYMOUS_MASK if use_mask else r.placeholder
+                cursor.insertText(display, fmt)
                 pos = r.end
                 repl_idx += 1
             else:
