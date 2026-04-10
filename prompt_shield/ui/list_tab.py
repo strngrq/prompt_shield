@@ -60,27 +60,19 @@ class ListTab(QWidget):
         # Connect model changes for inline editing
         self.model.itemChanged.connect(self._on_item_changed)
 
-        # ── add form ──
-        add_layout = QHBoxLayout()
-        self.text_input = QLineEdit()
-        self.text_input.setPlaceholderText("Text to add...")
-        add_layout.addWidget(self.text_input)
+        # ── add / delete ──
+        btn_layout = QHBoxLayout()
 
-        self.prefix_cb = QCheckBox("Prefix match")
-        add_layout.addWidget(self.prefix_cb)
-
-        self.case_cb = QCheckBox("Case sensitive")
-        add_layout.addWidget(self.case_cb)
-
-        self.add_btn = QPushButton("Add")
+        self.add_btn = QPushButton("Add…")
         self.add_btn.clicked.connect(self._on_add)
-        add_layout.addWidget(self.add_btn)
+        btn_layout.addWidget(self.add_btn)
 
         self.delete_btn = QPushButton("Delete selected")
         self.delete_btn.clicked.connect(self._on_delete)
-        add_layout.addWidget(self.delete_btn)
+        btn_layout.addWidget(self.delete_btn)
 
-        layout.addLayout(add_layout)
+        btn_layout.addStretch()
+        layout.addLayout(btn_layout)
 
         self._refresh()
 
@@ -134,20 +126,27 @@ class ListTab(QWidget):
             self.db.update_allow(row_id, text, prefix, case)
 
     def _on_add(self):
-        text = self.text_input.text().strip()
-        if not text:
+        from prompt_shield.ui.add_list_entry_dialog import AddListEntryDialog
+
+        dlg = AddListEntryDialog(
+            text="", list_type=self.list_type, source="manual", parent=self
+        )
+        result = dlg.run()
+        if result is None:
             return
-        prefix = self.prefix_cb.isChecked()
-        case = self.case_cb.isChecked()
 
         if self.list_type == "block":
-            self.db.add_block(text, prefix_match=prefix, case_sensitive=case)
+            self.db.add_block(
+                result["text"],
+                prefix_match=result["prefix_match"],
+                case_sensitive=result["case_sensitive"],
+            )
         else:
-            self.db.add_allow(text, prefix_match=prefix, case_sensitive=case)
-
-        self.text_input.clear()
-        self.prefix_cb.setChecked(False)
-        self.case_cb.setChecked(False)
+            self.db.add_allow(
+                result["text"],
+                prefix_match=result["prefix_match"],
+                case_sensitive=result["case_sensitive"],
+            )
         self._refresh()
 
     def _on_delete(self):

@@ -1,6 +1,6 @@
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QTextCursor, QTextCharFormat, QColor, QFont, QAction
-from PySide6.QtWidgets import QTextEdit, QToolTip, QMenu
+from PySide6.QtWidgets import QTextEdit, QToolTip, QMenu, QLabel, QVBoxLayout, QWidget
 
 # Custom property IDs stored on QTextCharFormat
 PROP_PLACEHOLDER = 0x100001
@@ -16,6 +16,24 @@ def _char_format_at(doc, pos: int) -> QTextCharFormat:
     return c.charFormat()
 
 
+def _strip_whitespace_from_selection(cursor: QTextCursor) -> str | None:
+    """Shrink cursor selection to exclude leading/trailing whitespace.
+
+    Returns the stripped text, or None if nothing remains.
+    """
+    selected = cursor.selectedText()
+    stripped = selected.strip()
+    if not stripped:
+        return None
+    leading = len(selected) - len(selected.lstrip())
+    trailing = len(selected) - len(selected.rstrip())
+    start = cursor.selectionStart() + leading
+    end = cursor.selectionEnd() - trailing
+    cursor.setPosition(start)
+    cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+    return stripped
+
+
 class OutputEdit(QTextEdit):
     """Read-only QTextEdit with hover tooltips and context-menu actions for placeholders."""
 
@@ -24,10 +42,31 @@ class OutputEdit(QTextEdit):
         self.setReadOnly(True)
         self.setMouseTracking(True)
 
-        self._db = None  # set externally
+        self._db = None
+
+        self._hint_label = QLabel(
+            "Hold Alt (⌥) for exact selection without snap-to-word", self
+        )
+        self._hint_label.setStyleSheet(
+            "QLabel { background: #444; color: #eee; padding: 3px 8px;"
+            " border-radius: 3px; font-size: 11px; }"
+        )
+        self._hint_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._hint_label.hide()
 
     def set_db(self, db):
         self._db = db
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._position_hint()
+
+    def _position_hint(self):
+        lbl = self._hint_label
+        lbl.adjustSize()
+        x = (self.width() - lbl.width()) // 2
+        y = self.height() - lbl.height() - 6
+        lbl.move(x, y)
 
     # ── tooltip on hover ──────────────────────────────────
 
@@ -42,6 +81,51 @@ class OutputEdit(QTextEdit):
             QToolTip.hideText()
         super().mouseMoveEvent(event)
 
+    # ── show/hide hint on selection change ─────────────────
+
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+        cursor = self.textCursor()
+        if cursor.hasSelection():
+            alt_held = event.modifiers() & Qt.KeyboardModifier.AltModifier
+            if not alt_held:
+                self._normalize_selection_to_words(cursor)
+                self.setTextCursor(cursor)
+            self._hint_label.show()
+            self._position_hint()
+        else:
+            self._hint_label.hide()
+
+    def mousePressEvent(self, event):
+        super().mousePressEvent(event)
+        self._hint_label.hide()
+
+    # ── snap-to-word ──────────────────────────────────────
+
+    def _normalize_selection_to_words(self, cursor: QTextCursor) -> str | None:
+        """Expand a partial-word selection to full word boundaries.
+
+        Uses Qt's StartOfWord / EndOfWord which follow ICU Unicode rules,
+        so Cyrillic, CJK, umlauts etc. are handled correctly.
+        Returns the stripped selected text, or None if empty.
+        """
+        start = cursor.selectionStart()
+        end = cursor.selectionEnd()
+
+        tmp = QTextCursor(cursor.document())
+        tmp.setPosition(start)
+        tmp.movePosition(QTextCursor.MoveOperation.StartOfWord)
+        new_start = tmp.position()
+
+        tmp.setPosition(end)
+        tmp.movePosition(QTextCursor.MoveOperation.EndOfWord)
+        new_end = tmp.position()
+
+        cursor.setPosition(new_start)
+        cursor.setPosition(new_end, QTextCursor.MoveMode.KeepAnchor)
+
+        return _strip_whitespace_from_selection(cursor)
+
     # ── context menu ──────────────────────────────────────
 
     def contextMenuEvent(self, event):
@@ -53,12 +137,10 @@ class OutputEdit(QTextEdit):
         placeholder = fmt.property(PROP_PLACEHOLDER)
         original = fmt.property(PROP_ORIGINAL)
 
-        # Check if user has a selection
         sel_cursor = self.textCursor()
         has_selection = sel_cursor.hasSelection()
 
         if placeholder and original:
-            # Clicked on a placeholder — offer Unmask, Block, Allow
             unmask_action = QAction("Unmask (show original)", menu)
             unmask_action.triggered.connect(lambda: self._unmask_placeholder(cursor))
             menu.addAction(unmask_action)
@@ -69,12 +151,16 @@ class OutputEdit(QTextEdit):
             block_action.triggered.connect(lambda: self._block_text(str(original)))
             menu.addAction(block_action)
 
+            _ph, _orig = str(placeholder), str(original)
             allow_action = QAction(f'Allow "{original}"', menu)
-            allow_action.triggered.connect(lambda: self._allow_text(str(original)))
+            allow_action.triggered.connect(
+                lambda: self._allow_text(_orig, unmask_placeholder=_ph)
+            )
             menu.addAction(allow_action)
 
         elif has_selection:
-            selected_text = sel_cursor.selectedText().strip()
+            selected_text = _strip_whitespace_from_selection(sel_cursor)
+
             if selected_text:
                 mask_action = QAction("Mask selection", menu)
                 mask_action.triggered.connect(lambda: self._mask_selection(sel_cursor))
@@ -83,14 +169,41 @@ class OutputEdit(QTextEdit):
                 menu.addSeparator()
 
                 block_action = QAction(f'Block "{selected_text}"', menu)
-                block_action.triggered.connect(lambda: self._block_text_and_mask(selected_text, sel_cursor))
+                block_action.triggered.connect(
+                    lambda: self._block_text_and_mask(selected_text, sel_cursor)
+                )
                 menu.addAction(block_action)
 
                 allow_action = QAction(f'Allow "{selected_text}"', menu)
                 allow_action.triggered.connect(lambda: self._allow_text(selected_text))
                 menu.addAction(allow_action)
 
+        else:
+            # No selection — snap to the word under the right-click position
+            word_cursor = QTextCursor(cursor)
+            word_cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+            word_text = word_cursor.selectedText().strip()
+            if word_text:
+                self.setTextCursor(word_cursor)
+
+                mask_action = QAction(f'Mask "{word_text}"', menu)
+                mask_action.triggered.connect(lambda: self._mask_selection(word_cursor))
+                menu.addAction(mask_action)
+
+                menu.addSeparator()
+
+                block_action = QAction(f'Block "{word_text}"', menu)
+                block_action.triggered.connect(
+                    lambda: self._block_text_and_mask(word_text, word_cursor)
+                )
+                menu.addAction(block_action)
+
+                allow_action = QAction(f'Allow "{word_text}"', menu)
+                allow_action.triggered.connect(lambda: self._allow_text(word_text))
+                menu.addAction(allow_action)
+
         if menu.actions():
+            self._hint_label.hide()
             menu.exec(event.globalPos())
 
     # ── actions ───────────────────────────────────────────
@@ -102,33 +215,23 @@ class OutputEdit(QTextEdit):
         if not original:
             return
 
-        # Select the whole placeholder token
         self._select_formatted_run(cursor)
         if not cursor.hasSelection():
             return
 
-        # Replace with original text in default format
         default_fmt = QTextCharFormat()
         self.setReadOnly(False)
         cursor.insertText(str(original), default_fmt)
         self.setReadOnly(True)
 
     def _mask_selection(self, cursor: QTextCursor):
-        """Replace selected clear text with a new placeholder (strips spaces)."""
+        """Replace selected clear text with a new placeholder."""
         if not self._db:
             return
-        selected = cursor.selectedText()
-        stripped = selected.strip()
+
+        stripped = _strip_whitespace_from_selection(cursor)
         if not stripped:
             return
-
-        # Adjust selection to exclude leading/trailing spaces
-        leading = len(selected) - len(selected.lstrip())
-        trailing = len(selected) - len(selected.rstrip())
-        start = cursor.selectionStart() + leading
-        end = cursor.selectionEnd() - trailing
-        cursor.setPosition(start)
-        cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
 
         placeholder = self._db.create_mapping(stripped, "INFO")
         fmt = self._placeholder_format(placeholder, stripped, "INFO")
@@ -144,45 +247,117 @@ class OutputEdit(QTextEdit):
         stripped = text.strip()
         if not stripped:
             return
-        self._db.add_block(stripped)
+
+        from prompt_shield.ui.add_list_entry_dialog import AddListEntryDialog
+
+        dlg = AddListEntryDialog(
+            text=stripped, list_type="block", source="selection", parent=self
+        )
+        result = dlg.run()
+        if result is None:
+            return
+
+        self._db.add_block(
+            result["text"],
+            prefix_match=result["prefix_match"],
+            case_sensitive=result["case_sensitive"],
+        )
 
         placeholder = self._db.create_mapping(stripped, "BLOCKED")
         fmt = self._placeholder_format(placeholder, stripped, "BLOCKED")
-
         self._replace_all_plain_occurrences(stripped, placeholder, fmt)
 
     def _block_text(self, text: str):
         """Block from placeholder context menu — add to block list (already masked)."""
-        if self._db:
-            self._db.add_block(text)
+        if not self._db:
+            return
 
-    def _allow_text(self, text: str):
-        if self._db:
-            self._db.add_allow(text)
+        from prompt_shield.ui.add_list_entry_dialog import AddListEntryDialog
+
+        dlg = AddListEntryDialog(
+            text=text, list_type="block", source="selection", parent=self
+        )
+        result = dlg.run()
+        if result is None:
+            return
+
+        self._db.add_block(
+            result["text"],
+            prefix_match=result["prefix_match"],
+            case_sensitive=result["case_sensitive"],
+        )
+
+    def _allow_text(self, text: str, unmask_placeholder: str | None = None):
+        if not self._db:
+            return
+
+        from prompt_shield.ui.add_list_entry_dialog import AddListEntryDialog
+
+        dlg = AddListEntryDialog(
+            text=text, list_type="allow", source="selection", parent=self
+        )
+        result = dlg.run()
+        if result is None:
+            return
+
+        self._db.add_allow(
+            result["text"],
+            prefix_match=result["prefix_match"],
+            case_sensitive=result["case_sensitive"],
+        )
+
+        if unmask_placeholder:
+            self._unmask_all_occurrences(unmask_placeholder)
+
+    def _unmask_all_occurrences(self, placeholder_name: str):
+        """Replace every span tagged with *placeholder_name* with its original text."""
+        doc = self.document()
+        self.setReadOnly(False)
+        default_fmt = QTextCharFormat()
+
+        pos = 0
+        max_pos = doc.characterCount() - 1
+        while pos < max_pos:
+            fmt = _char_format_at(doc, pos)
+            if fmt.property(PROP_PLACEHOLDER) == placeholder_name:
+                original = str(fmt.property(PROP_ORIGINAL) or "")
+                cursor = QTextCursor(doc)
+                cursor.setPosition(pos)
+                # scan to end of this run
+                end = pos + 1
+                while end < max_pos:
+                    if _char_format_at(doc, end).property(PROP_PLACEHOLDER) != placeholder_name:
+                        break
+                    end += 1
+                cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+                cursor.insertText(original, default_fmt)
+                # after insertion, continue from pos + len(original)
+                pos += len(original)
+                max_pos = doc.characterCount() - 1
+            else:
+                pos += 1
+
+        self.setReadOnly(True)
 
     def _replace_all_plain_occurrences(self, search_text: str, placeholder: str, fmt: QTextCharFormat):
         """Find and replace ALL plain-text (non-placeholder) occurrences of search_text."""
         doc = self.document()
         self.setReadOnly(False)
 
-        # Search from the end to preserve positions
         full_text = self.toPlainText()
         search_lower = search_text.lower()
 
-        # Collect positions of matches that are NOT already placeholders
         matches = []
         start = 0
         while True:
             idx = full_text.lower().find(search_lower, start)
             if idx == -1:
                 break
-            # Check if this span is already a placeholder
             char_fmt = _char_format_at(doc, idx)
             if not char_fmt.property(PROP_PLACEHOLDER):
                 matches.append((idx, idx + len(search_text)))
             start = idx + 1
 
-        # Replace from end to start to preserve earlier positions
         for m_start, m_end in reversed(matches):
             cursor = QTextCursor(doc)
             cursor.setPosition(m_start)
@@ -201,29 +376,21 @@ class OutputEdit(QTextEdit):
 
         doc = self.document()
         pos = cursor.position()
-        max_pos = doc.characterCount() - 1  # last valid char index
+        max_pos = doc.characterCount() - 1
 
-        # cursor.charFormat() returns format of char BEFORE cursor position,
-        # so the character we're "on" is at (pos - 1). But we need to handle
-        # the case where pos == 0 as well.
-        # Find a starting char index that definitely has our placeholder.
-        # charFormat() at cursor position P describes char at P-1.
         anchor = max(pos - 1, 0)
         if _char_format_at(doc, anchor).property(PROP_PLACEHOLDER) != placeholder:
-            # Try pos itself
             if pos < max_pos and _char_format_at(doc, pos).property(PROP_PLACEHOLDER) == placeholder:
                 anchor = pos
             else:
                 return
 
-        # Scan left
         start = anchor
         while start > 0:
             if _char_format_at(doc, start - 1).property(PROP_PLACEHOLDER) != placeholder:
                 break
             start -= 1
 
-        # Scan right
         end = anchor + 1
         while end < max_pos:
             if _char_format_at(doc, end).property(PROP_PLACEHOLDER) != placeholder:
