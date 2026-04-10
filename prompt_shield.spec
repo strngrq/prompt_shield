@@ -77,6 +77,14 @@ spacy_datas = collect_data_files("spacy", include_py_files=False)
 en_model_datas = collect_data_files("en_core_web_sm")
 spacy_datas += en_model_datas
 
+# ── pymorphy3 dictionaries (Russian) ──
+# spaCy's Russian model (ru_core_news_*) is downloaded at runtime via the
+# Settings → Language Models UI, but its RussianLemmatizer lazily imports
+# pymorphy3 + pymorphy3_dicts_ru. Those are pure-Python libraries, not model
+# data, so we ship them in the bundle once. ~15 MB for dicts; covers both
+# ru_core_news_sm and ru_core_news_lg.
+spacy_datas += collect_data_files("pymorphy3_dicts_ru")
+
 a = Analysis(
     [ENTRY],
     pathex=[str(ROOT)],
@@ -94,6 +102,15 @@ a = Analysis(
         # spaCy hidden imports that PyInstaller misses
         "spacy.lang.en",
         "spacy.lang.ru",
+        # pymorphy3 is imported lazily inside spacy.lang.ru.lemmatizer at
+        # runtime, so PyInstaller's static scanner misses it. Force-include.
+        "pymorphy3",
+        "pymorphy3.analyzer",
+        "pymorphy3.opencorpora_dict",
+        "pymorphy3.opencorpora_dict.storage",
+        "pymorphy3_dicts_ru",
+        "dawg_python",
+        "docopt",
         "thinc.backends.numpy_ops",
         "thinc.backends.ops",
         "srsly.msgpack.util",
